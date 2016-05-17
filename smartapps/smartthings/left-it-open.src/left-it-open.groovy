@@ -16,8 +16,6 @@
  *  Date: 2013-05-09
  */
  
-import groovy.time.TimeDuration
-import groovy.time.TimeCategory
 
 definition(
     name: "Left It Open",
@@ -31,28 +29,29 @@ definition(
 
 preferences {
 
+    section( "Enabley" )
+    {
+        input "enabled", "bool",  title: "Enabled", defaultValue: true, required: true
+    }
 	section("Monitor these doors or windows") {
-		input "contact_sensors", "capability.contactSensor", multiple: true
+		input "contact_sensors", "capability.contactSensor", multiple: true, required: true
 	}
 	section("And notify me if it's open for more than this many minutes") {
-		input "openThreshold", "number", title: "Minutes", required: true, defaultValue: 10
+		input "openThresholdMin", "number", title: "Minutes", defaultValue: 10, required: true
 	}
     section("Delay between notifications") {
-        input "warnPeriodMin",     "number", title: "Minutes", required: true, defaultValue: 10
+        input "warnPeriodMin",     "number", title: "Minutes", defaultValue: 10, required: true
     }
-    /*
     section( "Notifications" )
     {
-        input "sendPushMessage", "bool",  title: "Send a push notification?", required: false, defaultValue: false
+        input "sendPushMessage", "bool",  title: "Send a push notification?", required: true, defaultValue: false
         input "phone",           "phone", title: "Send a Text Message?",      required: false
     }
-    */
 }
 
 def installed() {
 	log.trace "installed()"
-    resetState()
-	subscribe()
+    updated()
 }
 
 def updated() {
@@ -65,214 +64,147 @@ def updated() {
 
 def resetState() {
     log.debug "resetState()"
-   
     state.clear()
-    state.openTime       = [:]
-    state.warnTime       = [:]
-    state.warnAt         = [:]
-    
-    // NOTE: may need to use atomic state here?
-    state.checkScheduled = false
-    
-    for (xxx in contact_sensors)
+    state.openTime     = [:]
+    state.lastWarnTime = [:]
+    for (contact in settings.contact_sensors)
     {
-        log.debug "${xxx.name}: ${xxx.contact} ${xxx.id} ${xxx.displayName}"
-        //state.openTime[xxx.id] = 0
+        log.debug contact
+        log.debug contact.contactState
+        if (contact.contactState && contact.contactState.value == "open" )
+        {
+            log.debug "OPEN"
+            state.openTime[contact.id] = contact.contactState.rawDateCreated.time
+        }
+        else
+        {
+            log.debug "CLOSED"
+        }
     }
-    
-    // log each capability supported by the "mySwitch" device, along
-    // with all its supported attributes
-    // contact_sensors.each { xxx ->
-        // log.debug "${xxx}: ${xxx.name} -> " + xxx.currentState("contact")
-        //log.debug "${xxx}: ${xxx.name} -> " + xxx.contactState.value
-    // }
-    
     log.debug state
+    checkDoorOpenTooLong()
 }
 
 def subscribe() {
     log.debug "subscribe()"
-	subscribe(contact_sensors, "contact.open",   doorOpen)
-	subscribe(contact_sensors, "contact.closed", doorClosed)
+	subscribe(settings.contact_sensors, "contact.open",   doorOpen)
+	subscribe(settings.contact_sensors, "contact.closed", doorClosed)
+    log.debug "    --> subscribe finished"
 }
 
 def doorOpen(evt)
 {
 	log.trace "doorOpen($evt.device -> $evt.name: $evt.value)"
- 
     state.openTime[evt.deviceId] = now()
-    state.warnAt[evt.deviceId]   = now() + (settings.openThreshold * 60)
-    
-    // first time a door is opened, the delay should match the
-    // threshold, if we have already scheduled the runIn timer
-    // then don't bother and then determine the runIn delay
-    // in that routine based on the open doors
-   
-    if(state.checkScheduled)
-    {
-        log.debug "check has already been scheduled..."
-    }
-    else
-    {
-        def delay = (openThreshold != null && openThreshold != "") ? openThreshold * 60 : 600
-        runIn(delay, doorOpenTooLong, [overwrite: false])
-        state.checkScheduled = true
-        log.debug "Check scheduled for ${delay} seconds from now"
-    }
+    checkDoorOpenTooLong()
 }
 
 def doorClosed(evt)
 {
 	log.trace "doorClosed($evt.device -> $evt.name: $evt.value)"
-    sendClosedMessage(evt.device)
+    
+    if (state.lastWarnTime[evt.deviceId])
+        log.debug "We have actually issued a warning for this one..."
+    else
+        log.debug "We never warned about this one..."
+    
+    if (state.lastWarnTime[evt.deviceId])
+        sendClosedMessage(evt.device)
     state.openTime.remove(evt.deviceId)
-    state.warnTime.remove(evt.deviceId)
-    state.warnAt.remove(evt.deviceId)
+    state.lastWarnTime.remove(evt.deviceId)
+    
+    if (state.lastWarnTime[evt.deviceId])
+        log.debug "IT STILL THERE!"
+    else
+        log.debug "its not there which is good"
+        
+    checkDoorOpenTooLong()
 }
 
-def doorOpenTooLong() {
+def checkDoorOpenTooLong()
+{
+    log.trace "checkDoorOpenTooLong()"
 
-    def nextRunDelaySec        = null
+    def nextRunMinList = []
    
     log.debug "-------------------------------------"
     
     // loop over all the open contact sensors
-    def open_sensors = contact_sensors.findAll { it?.contactState.value == "open" }
+    def open_sensors = settings.contact_sensors.findAll { it?.contactState && it?.contactState.value == "open" }
     for (contact in open_sensors)
     {
         log.debug "    OPEN CONTACT: ${contact.displayName}"
         
-        def diff_minutes      = (now() - state.openTime[contact.id]) / 60000
-        def temp_next_run     = 0
-
-        log.debug "        --> Opened ${diff_minutes} minutes ago"
+        def openTimeMin = (now() - state.openTime[contact.id]) / 60000
+        def nextRunMin  = warnPeriodMin
+        
+        log.debug "        --> Opened ${openTimeMin} minutes ago"
        
-        if (state.warnTime[contact.id])
+        if (state.lastWarnTime[contact.id])
         {
             // we've issued a warning already, is it time to issue another
             // or check to see when we need to run again
-
-            def warn_diff_minutes = (now() - state.warnTime[contact.id]) / 60000
-            log.debug "        --> this contact had already issued a warning at: ${warn_diff_minutes} minutes ago"
-
-            if(warn_diff_minutes > warnPeriodMin)
+            def timeSinceLastWarnMin = (now() - state.lastWarnTime[contact.id]) / 60000
+            log.debug "        --> this contact had already issued a warning ${timeSinceLastWarnMin} minutes ago"
+            if(timeSinceLastWarnMin > warnPeriodMin)
             {
-                state.warnTime[contact.id] = now()
-                temp_next_run              = warnPeriodMin * 60
                 log.debug "       --> send notification... again!"
+                sendOpenMessage(contact)
             }
             else
             {
-                temp_next_run = (warnPeriodMin - warn_diff_minutes) * 60
-                log.debug "       --> no warning yet...  Run again in ${temp_next_run} seconds"
+                nextRunMin = warnPeriodMin - timeSinceLastWarnMin
+                log.debug "       --> Not time yet for warning. Run again in ${nextRunMin} minutes"
             }
         }
-        else if(diff_minutes > openThreshold)
+        else if(openTimeMin > openThresholdMin)
         {
             // no warning issued yet, so lets issue the first yay
-
-            state.warnTime[contact.id] = now()
             log.debug "       --> send notification!"
-            sendMessage(contact)
-
-            // we issued a warning, so our next run time is based on the warn period
-            temp_next_run              = warnPeriodMin * 60
+            sendOpenMessage(contact)
         }
         else
         {
-            // no warnings issued yet...
-            temp_next_run = (openThreshold - diff_minutes) * 60
+            // no warnings issued yet.  We must be here
+            // because another contact was opened before it...
+            nextRunMin = (openThresholdMin - openTimeMin)
         }
 
-        // If we need to run again, lets see if its quicker than
-        // the others so we only schedule once...
-        if(temp_next_run > 0)
-        {
-            log.debug "        --> next run in ${temp_next_run} seconds"
-            if( (nextRunDelaySec == null) || (temp_next_run < nextRunDelaySec) )
-            {
-                nextRunDelaySec = temp_next_run
-            }
-        }
-            
+        log.debug "       --> next run in ${nextRunMin} minutes"
+        nextRunMinList << nextRunMin
+        
     } // END loop over each contact sensor
-    
-    log.debug "NEXT RUN: ${nextRunDelaySec} seconds"
-    log.debug "-------------------------------------"
-    
-    if( (nextRunDelaySec != null) && (nextRunDelaySec > 0) )
+   
+    if (nextRunMinList)
     {
-        state.checkScheduled = true
-        runIn(nextRunDelaySec, doorOpenTooLong, [overwrite: false])
+        def nextRunMin = Math.ceil(nextRunMinList.min())
+        log.debug "NEXT RUN: ${nextRunMin} minutes"
+        runIn( (nextRunMin * 60) + 10, checkDoorOpenTooLong, [overwrite: true])
     }
     else
     {
-        state.checkScheduled = false
+        log.debug "NOTHING LEFT TO CHECK..."
     }
     
-   
-        /*
-        // does this sensor have a last opened value in the table
-        def openTime = state.openTime[contact.id]
-        if (openTime != null)
-        {
-            // check open/closed state, and reset counter and issue warning
-            //     if currently closed (that would mean we missed the
-            //     closed event)
-            //
-            // check if any contacts open too long and send out te
-            //     message to user
-            //
-            // check if any contacts need a reminder issued
-            //
-            // use a single reschedule time variable and at end of routine
-            //     reschedule the handler for the smallest time in future
-            def diff_minutes = (now() - openTime) / 60000
-            def diff_minutes2 = (now() - contact.contactState.rawDateCreated.time) / 60000
-            log.debug "${contact.displayName} ${contact.contactState.value} for ${diff_minutes} minutes or ${diff_minutes2} minutes"
-        }
-        else
-        {
-            log.debug "${contact.displayName} ${contact.contactState.value} - was not in table!"
-        }
-        */
-	/* def contactState = contact.currentState("contact")
-    def freq = (warnPeriodMin != null && warnPeriodMin != "") ? warnPeriodMin * 60 : 600
-
-	if (contactState.value == "open") {
-		def elapsed = now() - contactState.rawDateCreated.time
-		def threshold = ((openThreshold != null && openThreshold != "") ? openThreshold * 60000 : 60000) - 1000
-		if (elapsed >= threshold) {
-			log.debug "Contact has stayed open long enough since last check ($elapsed ms):  calling sendMessage()"
-			sendMessage()
-            runIn(freq, doorOpenTooLong, [overwrite: false])
-		} else {
-			log.debug "Contact has not stayed open long enough since last check ($elapsed ms):  doing nothing"
-		}
-	} else {
-		log.warn "doorOpenTooLong() called but contact is closed:  doing nothing"
-	} */
+    log.debug "-------------------------------------"
 }
 
 void sendClosedMessage(contact)
 {
     log.debug "sendClosedMessage(${contact.displayName})"
    
+    // def openTimeMin = (now() - state.openTime[contact.id]) / 60000
+    // def msg         = "${contact.displayName} has been closed after ${openTimeMin} minutes.  Geez!"
+    // sendMessage(msg)
+    
     for (evt in contact.events(max: 5))
     {
         log.debug "EVENT: ${evt.device} -> ${evt.name}: ${evt.value} ${evt.date}"
         if (evt.value == "open")
         {
-            def diff_minutes = (now() - evt.date.time) / 60000
-            log.debug "${evt.device} closed after ${diff_minutes} minutes"
-       
-            def fuckyou = new Date()
-            log.debug fuckyou
-            log.debug fuckyou.time
-        
-            TimeDuration duration = fuckyou - evt.date
-            log.debug duration
-            
+            def openTimeMin = (now() - evt.date.time) / 60000
+	        def msg         = "${contact.displayName} closed after ${Math.round(openTimeMin)} minutes.  Geez!"
+            sendMessage(msg)
             return
         }
     }
@@ -280,27 +212,39 @@ void sendClosedMessage(contact)
     log.debug "sendClosedMessage called for ${contact.displayName}, but couldn't figure out when last opened..."
 }
 
-void sendMessage(contact)
+void sendOpenMessage(contact)
 {
-    def diff_minutes = (now() - contact.contactState.rawDateCreated.time) / 60000
-	def msg = "${contact.displayName} has been left open for ${diff_minutes} minutes."
-    
+    log.debug "sendMessage(${contact.displayName})"
+    state.lastWarnTime[contact.id] = now()
+    def openTimeMin = (now() - state.openTime[contact.id]) / 60000
+	def msg         = "${contact.displayName} left open for ${Math.round(openTimeMin)} minutes."
+    sendMessage(msg)
+}
+
+void sendMessage(msg)
+{
 	log.info msg
     
-    if (location.contactBookEnabled) {
+    if( state.enabled == false )
+    {
+        log.warn "App is disabled.  Not sending notifications..."
+    }
+    else if (location.contactBookEnabled)
+    {
         sendNotificationToContacts(msg, recipients)
     }
-    else {
-   
-        if (settings.phone) {
+    else
+    {
+        if (settings.phone)
+        {
             log.debug "Here I would send a message to: ${settings.phone}"
-            //sendSms phone, msg
+            sendSms phone, msg
         }
         
-        if (settings.sendPushMessage) {
+        if (settings.sendPushMessage)
+        {
             log.debug "Here I would send a push notification"
-            //sendPush msg
+            sendPush msg
         }
-        
     }
 }
