@@ -73,6 +73,8 @@ def triggerHandler(evt) {
         return
     }
    
+    sendNotificationEvent("Slow dim action started...")
+        
     def currentLevel = dimmers[0].currentLevel
     
     // calculate dim stepping value, but round up to nearest int
@@ -112,6 +114,7 @@ def dimStep() {
     if(currentLevel > state.lastLevel)
     {
         log.debug "dimStep: currentLevel [currentLevel] is greater than last level [$state.lastLevel], cancel slow dimmer"
+        sendNotificationEvent("Lights turned up, cancelling slow dimmage")
         return
     }
    
@@ -121,6 +124,7 @@ def dimStep() {
     if(newLevel < 1)
     {
     	log.debug "dimStep: next level less than 0 so turn it off..."
+        sendNotificationEvent("Looks like we're all done dimming and stuff")
         dimmers.off()
         return
     }
