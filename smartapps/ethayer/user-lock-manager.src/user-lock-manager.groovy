@@ -1,5 +1,5 @@
 /**
- *  User Lock Manager v4.0.10
+ *  User Lock Manager v4.1.4
  *
  *  Copyright 2015 Erik Thayer
  *
@@ -122,12 +122,12 @@ def userPage(params) {
       input(name: "dontNotify${i}", title: "Mute entry notification?", type: "bool", required: false, defaultValue: settings."dontNotify${i}")
       input(name: "burnCode${i}", title: "Burn after use?", type: "bool", required: false, defaultValue: settings."burnCode${i}")
       input(name: "userEnabled${i}", title: "Enabled?", type: "bool", required: false, defaultValue: settings."userEnabled${i}")
-      def phrases = location.helloHome?.getPhrases()*.label
-      if (phrases) {
-        phrases.sort()
-        input name: "userHomePhrases${i}", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: phrases, defaultValue: settings."userHomePhrases${i}", refreshAfterSelection: true
-        input "userNoRunPresence${i}", "capability.presenceSensor", title: "Don't run Actions if any of these are present:", multiple: true, required: false, defaultValue: settings."userNoRunPresence${i}"
-        input "userDoRunPresence${i}", "capability.presenceSensor", title: "Run Actions only if any of these are present:", multiple: true, required: false, defaultValue: settings."userDoRunPresence${i}"
+      def hhPhrases = location.getHelloHome()?.getPhrases()*.label
+      if (hhPhrases) {
+        hhPhrases.sort()
+        input name: "userHomePhrases${i}", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: hhPhrases, defaultValue: settings."userHomePhrases${i}", refreshAfterSelection: true
+        input "userNoRunPresence${i}", "capability.presenceSensor", title: "Don't run Actions if any of these are present:", multiple: true, required: false, defaultValue: settings."userNoRunPresence${i}" || false
+        input "userDoRunPresence${i}", "capability.presenceSensor", title: "Run Actions only if any of these are present:", multiple: true, required: false, defaultValue: settings."userDoRunPresence${i}" || false
       }
     }
     section {
@@ -149,10 +149,12 @@ def notificationPage() {
   dynamicPage(name: "notificationPage", title: "Notification Settings") {
 
     section {
-      input(name: "phone", type: "phone", title: "Text This Number", description: "Phone number", required: false, submitOnChange: true)
+      input(name: "phone", type: "text", title: "Text This Number", description: "Phone number", required: false, submitOnChange: true)
+      paragraph "For multiple SMS recipients, separate phone numbers with a semicolon(;)"
       input(name: "notification", type: "bool", title: "Send A Push Notification", description: "Notification", required: false, submitOnChange: true)
       if (phone != null || notification || sendevent) {
         input(name: "notifyAccess", title: "on User Entry", type: "bool", required: false)
+        input(name: "notifyLock", title: "on Lock", type: "bool", required: false)
         input(name: "notifyAccessStart", title: "when granting access", type: "bool", required: false)
         input(name: "notifyAccessEnd", title: "when revoking access", type: "bool", required: false)
       }
@@ -164,6 +166,7 @@ def notificationPage() {
     }
   }
 }
+
 def schedulingPage() {
   dynamicPage(name: "schedulingPage", title: "Rules For Access Scheduling") {
     if (!days) {
@@ -197,15 +200,15 @@ def calendarPage() {
       paragraph "This page is for advanced users only. You must enter each field carefully."
       paragraph "Calendar use does not support daily grant/deny OR Modes.  You cannot both have a date here, and allow access only on certain days/modes."
     }
-    def phrases = location.helloHome?.getPhrases()*.label
+    def hhPhrases = location.getHelloHome()?.getPhrases()*.label
     section("Start Date") {
       input name: "startDay", type: "number", title: "Day", required: false
       input name: "startMonth", type: "number", title: "Month", required: false
       input name: "startYear", type: "number", description: "Format(yyyy)", title: "Year", required: false
       input name: "startTime", type: "time", title: "Start Time", description: null, required: false
-      if (phrases) {
-        phrases.sort()
-        input name: "calStartPhrase", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: phrases, refreshAfterSelection: true
+      if (hhPhrases) {
+        hhPhrases.sort()
+        input name: "calStartPhrase", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: hhPhrases, refreshAfterSelection: true
       }
     }
     section("End Date") {
@@ -213,9 +216,9 @@ def calendarPage() {
       input name: "endMonth", type: "number", title: "Month", required: false
       input name: "endYear", type: "number", description: "Format(yyyy)", title: "Year", required: false
       input name: "endTime", type: "time", title: "End Time", description: null, required: false
-      if (phrases) {
-        phrases.sort()
-        input name: "calEndPhrase", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: phrases, refreshAfterSelection: true
+      if (hhPhrases) {
+        hhPhrases.sort()
+        input name: "calEndPhrase", type: "enum", title: "Hello Home Phrase", multiple: true,required: false, options: hhPhrases, refreshAfterSelection: true
       }
     }
   }
@@ -224,10 +227,10 @@ def calendarPage() {
 def onUnlockPage() {
   dynamicPage(name:"onUnlockPage", title:"Global Actions (Any Code)") {
     section("Actions") {
-      def phrases = location.helloHome?.getPhrases()*.label
-      if (phrases) {
-        phrases.sort()
-        input name: "homePhrases", type: "enum", title: "Home Mode Phrase", multiple: true,required: false, options: phrases, refreshAfterSelection: true, submitOnChange: true
+      def hhPhrases = location.getHelloHome()?.getPhrases()*.label
+      if (hhPhrases) {
+        hhPhrases.sort()
+        input name: "homePhrases", type: "enum", title: "Home Mode Phrase", multiple: true, required: false, options: hhPhrases, refreshAfterSelection: true, submitOnChange: true
         if (homePhrases) {
           input "noRunPresence", "capability.presenceSensor", title: "Don't run Actions if any of these are present:", multiple: true, required: false
           input "doRunPresence", "capability.presenceSensor", title: "Run Actions only if any of these are present:", multiple: true, required: false
@@ -252,6 +255,7 @@ def resetCodeUsagePage(params) {
     }
   }
 }
+
 def resetAllCodeUsagePage() {
   // do resetAll
   resetAllCodeUsage()
@@ -265,6 +269,7 @@ def resetAllCodeUsagePage() {
     }
   }
 }
+
 def reEnableUserPage(params) {
   // do reset
   def i = getUser(params)
@@ -332,6 +337,7 @@ def infoPage() {
     }
   }
 }
+
 def infoRefreshPage() {
   dynamicPage(name:"infoRefreshPage", title:"Lock Info") {
     section() {
@@ -432,7 +438,7 @@ def isUnique(newInt, oldInt) {
   i = 0
   oldInt.toString().toList().collect {
     i++
-    if (i <= newInt.length()) {
+    if (i <= oldInt.length()) {
       oldArray << normalizeNumber(it.toInteger())
     }
   }
@@ -498,6 +504,9 @@ def notificationPageDescription() {
     if (settings.notifyAccess) {
         parts << "on entry"
     }
+    if (settings.notifyLock) {
+        parts << "on lock"
+    }
     if (settings.notifyAccessStart) {
         parts << "when granting access"
     }
@@ -544,6 +553,7 @@ def userHrefTitle(i) {
   }
   return title
 }
+
 def userHrefDescription(i) {
   def uc = settings."userCode${i}"
   def us = settings."userSlot${i}"
@@ -701,6 +711,7 @@ def resetAllCodeUsage() {
   }
   log.debug "reseting all code usage"
 }
+
 def resetCodeUsage(i) {
   if(state."userState${i}" == null) {
     state."userState${i}" = [:]
@@ -708,6 +719,7 @@ def resetCodeUsage(i) {
   }
   state."userState${i}".usage = 0
 }
+
 def enableUser(i) {
   state."userState${i}".enabled = true
 }
@@ -719,6 +731,7 @@ def initalizeLockData() {
     }
   }
 }
+
 def lockErrorLoopReset() {
   state.error_loop_count = 0
   theLocks.each { lock->
@@ -1014,7 +1027,7 @@ def codereturn(evt) {
 
 def usedUserIndex(usedSlot) {
   for (int i = 1; i <= settings.maxUsers; i++) {
-    if (settings."userSlot${i}".toInteger() == usedSlot.toInteger()) {
+    if (settings."userSlot${i}" && settings."userSlot${i}".toInteger() == usedSlot.toInteger()) {
       return i
     }
   }
@@ -1022,14 +1035,17 @@ def usedUserIndex(usedSlot) {
 }
 
 def codeUsed(evt) {
-  // check the status of the lock, helpful for some schelage locks.
+  // check the status of the lock, helpful for some schlage locks.
   runIn(10, doPoll)
+  log.debug("codeUsed evt.value: " + evt.value + ". evt.data: " + evt.data)
+  def message = null
+
   if(evt.value == "unlocked" && evt.data) {
     def codeData = new JsonSlurper().parseText(evt.data)
     if(codeData.usedCode && codeData.usedCode.isNumber() && userSlotArray().contains(codeData.usedCode.toInteger())) {
       def usedIndex = usedUserIndex(codeData.usedCode).toInteger()
       def unlockUserName = settings."userName${usedIndex}"
-      def message = "${evt.displayName} was unlocked by ${unlockUserName}"
+      message = "${evt.displayName} was unlocked by ${unlockUserName}"
       // increment usage
       state."userState${usedIndex}".usage = state."userState${usedIndex}".usage + 1
       if(settings."userHomePhrases${usedIndex}") {
@@ -1055,12 +1071,20 @@ def codeUsed(evt) {
         runIn(60*2, doPoll)
         message += ".  Now burning code."
       }
-      //Only send notificaton if set to burn code or not muted
-      if(settings."burnCode${usedIndex}" || settings."dontNotify${usedIndex}" != true) {
-        send(message)
+      //Don't send notification if muted
+      if(settings."dontNotify${usedIndex}" == true) {
+        message = null
       }
     }
+  } else if(evt.value == "locked" && settings.notifyLock) {
+    message = "${evt.displayName} has been locked"
   }
+
+  if (message) {
+    log.debug("Sending message: " + message)
+    send(message)
+  }
+
   if (homePhrases) {
     performActions(evt)
   }
@@ -1089,7 +1113,6 @@ def performActions(evt) {
     }
   }
 }
-
 
 def revokeDisabledUsers() {
   def array = []
@@ -1128,6 +1151,7 @@ def grantAccess() {
     runIn(60*2, doPoll)
   }
 }
+
 def revokeAccess() {
   def array = []
   enabledUsersArray().each { user->
@@ -1275,6 +1299,7 @@ private send(msg) {
     sendMessage(msg)
   }
 }
+
 private sendMessage(msg) {
   if (notification) {
     sendPush(msg)
@@ -1282,7 +1307,15 @@ private sendMessage(msg) {
     sendNotificationEvent(msg)
   }
   if (phone) {
-    sendSms(phone, msg)
+    if ( phone.indexOf(";") > 1){
+      def phones = phone.split(";")
+      for ( def i = 0; i < phones.size(); i++) {
+        sendSms(phones[i], msg)
+      }
+    }
+    else {
+      sendSms(phone, msg)
+    }
   }
 }
 
@@ -1295,5 +1328,5 @@ def populateDiscovery(codeData, lock) {
   (1..codeSlots).each { slot->
     codes."slot${slot}" = codeData."code${slot}"
   }
-  state."lock${lock.id}".codes = codes
+  atomicState."lock${lock.id}".codes = codes
 }
