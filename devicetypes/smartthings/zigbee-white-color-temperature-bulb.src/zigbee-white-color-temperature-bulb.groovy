@@ -23,14 +23,18 @@ metadata {
         capability "Color Temperature"
         capability "Configuration"
         capability "Refresh"
-        capability "Sensor"
         capability "Switch"
         capability "Switch Level"
 
         attribute "colorName", "string"
         command "setGenericName"
 
-        fingerprint profileId: "0104", inClusters: "0000,0003,0004,0005,0006,0008,0300,0B04", outClusters: "0019"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300", outClusters: "0019"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300, 0B04", outClusters: "0019"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300, 0B04, FC0F", outClusters: "0019", manufacturer: "OSRAM", model: "LIGHTIFY BR Tunable White", deviceJoinName: "OSRAM LIGHTIFY LED Flood BR30 Tunable White"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300, 0B04, FC0F", outClusters: "0019", manufacturer: "OSRAM", model: "LIGHTIFY RT Tunable White", deviceJoinName: "OSRAM LIGHTIFY LED Recessed Kit RT 5/6 Tunable White"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300, 0B04, FC0F", outClusters: "0019", manufacturer: "OSRAM", model: "Classic A60 TW", deviceJoinName: "OSRAM LIGHTIFY LED Tunable White 60W"
+        fingerprint profileId: "0104", inClusters: "0000, 0003, 0004, 0005, 0006, 0008, 0300, 0B04, FC0F", outClusters: "0019", manufacturer: "OSRAM", model: "LIGHTIFY A19 Tunable White", deviceJoinName: "OSRAM LIGHTIFY LED Tunable White 60W"
     }
 
     // UI tile definitions
@@ -50,7 +54,7 @@ metadata {
             }
         }
 
-        standardTile("refresh", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
+        standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
             state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
         }
 
@@ -69,16 +73,9 @@ metadata {
 // Parse incoming device messages to generate events
 def parse(String description) {
     log.debug "description is $description"
-
-    def finalResult = zigbee.getKnownDescription(description)
-    if (finalResult) {
-        log.info finalResult
-        if (finalResult.type == "update") {
-            log.info "$device updates: ${finalResult.value}"
-        }
-        else {
-            sendEvent(name: finalResult.type, value: finalResult.value)
-        }
+    def event = zigbee.getEvent(description)
+    if (event) {
+        sendEvent(event)
     }
     else {
         log.warn "DID NOT PARSE MESSAGE for description : $description"
