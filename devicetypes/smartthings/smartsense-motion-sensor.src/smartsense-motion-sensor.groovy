@@ -49,7 +49,11 @@ metadata {
 		}
 		section {
 			input title: "Temperature Offset", description: "This feature allows you to correct any temperature variations by selecting an offset. Ex: If your sensor consistently reports a temp that's 5 degrees too warm, you'd enter '-5'. If 3 degrees too cold, enter '+3'.", displayDuringSetup: false, type: "paragraph", element: "paragraph"
-			input "tempOffset", "number", title: "Degrees", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: false
+			input "tempOffset", "number", title: "Degrees", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: true
+
+            input "maxTempReportTime", "number", title: "Max Temp Report Time", description: "Max time between temp reports (seconds)", range: "30..3600", defaultValue: 3600, displayDuringSetup: true
+            input "minTempReportTime", "number", title: "Min Temp Report Time", description: "Min time between temp reports (seconds)", range: "30..3600", defaultValue: 300,  displayDuringSetup: true
+            input "triggerTemp",       "number", title: "Trigger Temp",         description: "Temp Change Required to Trigger Update (F)", range: "0.1..5", defaultValue: 1,   displayDuringSetup: true
 		}
 	}
 
@@ -323,7 +327,12 @@ def refresh() {
 }
 
 def configure() {
+
+    // What is this?!?!?
 	sendEvent(name: "checkInterval", value: 7200, displayed: false)
+
+    def xxx = triggerTemp * 5.0 / 9
+    log.debug "triggerTemp: ${triggerTemp}   xxx: ${xxx}"
 
 	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
 	log.debug "Configuring Reporting, IAS CIE, and Bindings."
@@ -337,6 +346,14 @@ def configure() {
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
 
 		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 0x402 {${device.zigbeeId}} {}", "delay 200",
+        // (degrees C * 100) and the two bytes are swapped
+        //     So to trigger on changes of 5 degrees C
+        //     would be (5*100) = 500 = 0x01f4 --> 0xf401
+        //
+        //     The value hardcoded by smartthings here was
+        //     6400 = 0x1900 --> 0x0019 = 25
+        //     So default is to trigger on 25/100 deg C
+		//"zcl global send-me-a-report 0x402 0 0x29 300 ${maxTempReportTime} {6400}",
 		"zcl global send-me-a-report 0x402 0 0x29 300 3600 {6400}",
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500"
 	]

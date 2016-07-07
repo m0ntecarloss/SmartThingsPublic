@@ -37,6 +37,7 @@ metadata {
 	preferences {
 		input description: "This feature allows you to correct any temperature variations by selecting an offset. Ex: If your sensor consistently reports a temp that's 5 degrees too warm, you'd enter \"-5\". If 3 degrees too cold, enter \"+3\".", displayDuringSetup: false, type: "paragraph", element: "paragraph"
 		input "tempOffset", "number", title: "Temperature Offset", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: false
+        input "maxTempReportTime", "number", title: "Max Temp Report Time", description: "Max time between temp reports", range: "30..3600", displayDuringSetup: false
 	}
 
 	tiles(scale: 2) {
@@ -47,7 +48,7 @@ metadata {
 			}
 		}
 		valueTile("temperature", "device.temperature", width: 2, height: 2) {
-			state("temperature", label:'${currentValue}', unit:"F",
+			state("temperature", label:'${currentValue}°', unit:"F",
 				backgroundColors:[
 					[value: 31, color: "#153591"],
 					[value: 44, color: "#1e9cbb"],
@@ -59,15 +60,17 @@ metadata {
 				]
 			)
 		}
-		valueTile("battery", "device.battery", decoration: "flat", width: 2, height: 2) {
+		valueTile("battery", "device.battery", decoration: "flat", inactiveLabel: false, width: 2, height: 2) {
 			state "battery", label:'${currentValue}% battery', unit:""
 		}
-		standardTile("refresh", "device.refresh", decoration: "flat", width: 2, height: 2) {
+		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
-
-		main(["motion", "temperature"])
-		details(["motion", "temperature", "battery", "refresh"])
+        standardTile("configure", "device.motion", inactiveLabel: false, decoration: "flat") {
+			state "configure", action:"configuration.configure", icon:"st.secondary.configure"
+		}
+        main(["motion", "temperature"])
+		details(["motion", "temperature", "battery", "refresh", "configure"])
 	}
 }
 
@@ -100,6 +103,7 @@ def parse(String description) {
 }
 
 private Map parseCatchAllMessage(String description) {
+    log.debug "parseCatchAllMessage"
     Map resultMap = [:]
     def cluster = zigbee.parse(description)
     if (shouldProcessMessage(cluster)) {
@@ -109,6 +113,8 @@ private Map parseCatchAllMessage(String description) {
                 break
 
             case 0x0402:
+                // log.debug "incoming temp raw value: ${cluster.data}"
+                
                 // temp is last 2 data values. reverse to swap endian
                 String temp = cluster.data[-2..-1].reverse().collect { cluster.hex1(it) }.join()
                 def value = getTemperature(temp)
@@ -136,6 +142,7 @@ private boolean shouldProcessMessage(cluster) {
 }
 
 private Map parseReportAttributeMessage(String description) {
+    log.debug "parseReportAttributeMessage"
 	Map descMap = (description - "read attr - ").split(",").inject([:]) { map, param ->
 		def nameAndValue = param.split(":")
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
@@ -159,6 +166,7 @@ private Map parseReportAttributeMessage(String description) {
 }
  
 private Map parseCustomMessage(String description) {
+    log.debug "parseCustomMessage"
 	Map resultMap = [:]
 	if (description?.startsWith('temperature: ')) {
 		def value = zigbee.parseHATemperatureValue(description, "temperature: ", getTemperatureScale())
@@ -168,6 +176,7 @@ private Map parseCustomMessage(String description) {
 }
 
 private Map parseIasMessage(String description) {
+    log.debug "parseIasMessage"
     List parsedMsg = description.split(' ')
     String msgCode = parsedMsg[2]
     
@@ -210,6 +219,7 @@ private Map parseIasMessage(String description) {
 
 def getTemperature(value) {
 	def celsius = Integer.parseInt(value, 16).shortValue() / 100
+    log.debug "getTemperature: value=${value} celsius=${celsius}"
 	if(getTemperatureScale() == "C"){
 		return celsius
 	} else {
@@ -218,10 +228,7 @@ def getTemperature(value) {
 }
 
 private Map getBatteryResult(rawValue) {
-	log.debug 'Battery'
 	def linkText = getLinkText(device)
-
-	log.debug rawValue
 
 	def result = [
 		name: 'battery',
@@ -229,7 +236,9 @@ private Map getBatteryResult(rawValue) {
 	]
 
 	def volts = rawValue / 10
-	def descriptionText
+	def descriptionText // what?  I don't understand how this is part of 'result'
+    
+    log.debug "getBatteryResult: Raw=${rawValue}  volts=${volts}"
 
 	if (rawValue == 0) {}
 	else {
@@ -249,14 +258,15 @@ private Map getBatteryResult(rawValue) {
 }
 
 private Map getTemperatureResult(value) {
-	log.debug 'TEMP'
 	def linkText = getLinkText(device)
+    def original_value = value
 	if (tempOffset) {
 		def offset = tempOffset as int
 		def v = value as int
 		value = v + offset
 	}
-	def descriptionText = "${linkText} was ${value}${temperatureScale}"
+	log.debug "getTemperatureResult: value=${original_value} linkText=${linkText} tempOffset=${tempOffset} value=${value}"
+	def descriptionText = "${linkText} was fucking ${value}°${temperatureScale}"
 	return [
 		name: 'temperature',
 		value: value,
@@ -265,7 +275,7 @@ private Map getTemperatureResult(value) {
 }
 
 private Map getMotionResult(value) {
-	log.debug 'motion'
+	log.debug 'getMotionResult: motion'
 	String linkText = getLinkText(device)
 	String descriptionText = value == 'active' ? "${linkText} detected motion" : "${linkText} motion has stopped"
 	return [
@@ -288,6 +298,7 @@ def refresh() {
 def configure() {
 	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
 	log.debug "Configuring Reporting, IAS CIE, and Bindings."
+	log.debug "zcl global send-me-a-report 0x402 0 0x29 30 ${maxTempReportTime} {0A00}"
 
 	def configCmds = [
 		"zcl global write 0x500 0x10 0xf0 {${zigbeeEui}}", "delay 200",
@@ -297,8 +308,11 @@ def configure() {
 		"zcl global send-me-a-report 1 0x20 0x20 30 21600 {01}",		//checkin time 6 hrs
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
 
+        // (degrees C * 100) and the two bytes are swapped
+        //     So to trigger on changes of 5 degrees C will be 2301
+		// "zcl global send-me-a-report 0x402 0 0x29 30 3600 {6400}",
 		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 0x402 {${device.zigbeeId}} {}", "delay 200",
-		"zcl global send-me-a-report 0x402 0 0x29 30 3600 {6400}",
+		"zcl global send-me-a-report 0x402 0 0x29 30 ${maxTempReportTime} {0A00}",
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500"
 	]
     return configCmds + refresh() // send refresh cmds as part of config
