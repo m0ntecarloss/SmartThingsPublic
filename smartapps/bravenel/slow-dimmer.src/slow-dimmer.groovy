@@ -45,6 +45,10 @@ preferences {
     section("Select momentary button to launch...") {
         input "trigger", "capability.momentary", title: "Which?", required: true
     }
+    
+    section(hideable: True, "Debug") {
+        input "debugEnabled", "bool", title: "Debug Enabled", required: True
+    }
 }
 
 def installed() {
@@ -57,18 +61,19 @@ def updated() {
 }
 
 def initialize() {
-    DEBUG("initialize: minutes=$minutes")
+    DEBUG("initialize: xxx minutes=$minutes")
     subscribe(trigger, "switch.on",     triggerHandler)
     subscribe(motions, "motion.active", motionHandler)
+    subscribe(dimmers, "switch.off",    dimmerOffHandler)
     state.slow_dim_in_progress = false
     state.start_time = now()
 }
     
-def motionHandler(evt)
-{
-    log.debug("-------------------------------------")
+def motionHandler(evt) {
     
-    log.debug("motionHandler: slow_dim_in_progress=${state.slow_dim_in_progress}")
+    DEBUG("-------------------------------------")
+    DEBUG("motionHandler: slow_dim_in_progress=${state.slow_dim_in_progress}")
+    
     if(state.slow_dim_in_progress)
     {
         DEBUG("motionHandler: Saw motion.  Extending time...")
@@ -86,8 +91,7 @@ def motionHandler(evt)
     
 def triggerHandler(evt) {
 
-    log.debug("-------------------------------------")
-    
+    DEBUG("-------------------------------------")
     DEBUG("triggerHandler: Slow dim action started...")
    
     // kick off the dimmer...
@@ -97,17 +101,23 @@ def triggerHandler(evt) {
     
     // (re)calculate amount to dim by and when to dim...
     setupDimStep()
-   
-    //dimStep()
+}
+
+def dimmerOffHandler(evt) {
+    DEBUG("-------------------------------------")
+    DEBUG("dimmerOffHandler: dimmer was turned off.  Cancel slow dim")
+    state.slow_dim_in_progress = false
+    //trigger.off()
+    unschedule(dimstep)
 }
 
 def setupDimStep()
 {
-    log.debug("-------------------------------------")
+    DEBUG("-------------------------------------")
     
     // unschedule any current running instances of this smartapp
     // TODO: we can get rid of this...
-    unschedule()
+    unschedule(dimStep)
  
     // systematically determine dim step and delays between
     // dimmage...  This could certainly be done other ways
@@ -131,15 +141,15 @@ def setupDimStep()
     // initialize last value
     state.lastLevel = currentLevel
 
-    log.debug "setupDimStep:   currentLevel     = $currentLevel"
-    log.debug "setupDimStep:   minutes to take  = $minutes"
-    log.debug "setupDimStep:   dimStep          = $state.dimStep"
-    log.debug "setupDimStep:   iterations       = $iterations"
-    log.debug "setupDimStep:   delay_seconds    = $state.delay_seconds"
-    log.debug "setupDimStep:   actual_total_min = $actual_total_min"
+    DEBUG("setupDimStep:   currentLevel     = $currentLevel")
+    DEBUG("setupDimStep:   minutes to take  = $minutes")
+    DEBUG("setupDimStep:   dimStep          = $state.dimStep")
+    DEBUG("setupDimStep:   iterations       = $iterations")
+    DEBUG("setupDimStep:   delay_seconds    = $state.delay_seconds")
+    DEBUG("setupDimStep:   actual_total_min = $actual_total_min")
     
     // re-schedule again in delay_seconds
-    log.debug "setupDimStep:  rescheduling in ${state.delay_seconds} seconds"
+    DEBUG("setupDimStep:  rescheduling in ${state.delay_seconds} seconds")
     runIn(state.delay_seconds, dimStep)
 }
 
@@ -148,34 +158,39 @@ def dimStep()
     def total_time_min         = (now() - state.start_time)  / 1000.0 / 60.0
     def time_since_last_motion = (now() - state.last_motion) / 1000.0 / 60.0
    
-    log.debug("-------------------------------------")
+    DEBUG("-------------------------------------")
     
-    log.debug("dimStep: state.slow_dim_in_progress=${state.slow_dim_in_progress}   total_time_min=${total_time_min} minutes   since_last_motion=${time_since_last_motion} minutes.")
+    DEBUG(String.format("dimStep: state.slow_dim_in_progress=%s   total_time_min=%.1f minutes  since_last_motion=%.1f minutes", state.slow_dim_in_progress,
+                                                                                                                                total_time_min,
+                                                                                                                                time_since_last_motion))
     
     if(!state.slow_dim_in_progress)
     {
         DEBUG("dimStep: slow_dim_in_progress=${state.slow_dim_in_progress}.  I guess I'm done...\n" + 
-              "dimStep: after ${total_time_min} it looks like I'm supposed to stop...\n" +
-              "dimStep: Quit early after ${total_time_min}...  Time since last motion was ${time_since_last_motion} minutes.")
+              "dimStep: after " + String.format("%.1f min", total_time_min) + " it looks like I'm supposed to stop...\n" +
+              "dimStep: Quit early after " + String.format("%.1f min...", total_time_min) + "  Time since last motion was " + 
+              String.format("%.1f minutes.", time_since_last_motion))
         return
     }
     
     def currentLevel = dimmers[0].currentLevel
-    log.debug "dimStep: currentLevel = $currentLevel"
-    log.debug "dimStep: lastLevel    = $state.lastLevel"
+    DEBUG("dimStep: currentLevel = $currentLevel")
+    DEBUG("dimStep: lastLevel    = $state.lastLevel")
   
     // TODO: use setLevel event to cancel...
 /*
     if(currentLevel > state.lastLevel)
     {
-        log.debug "dimStep: currentLevel [currentLevel] is greater than last level [$state.lastLevel], cancel slow dimmer"
+        state.slow_dim_in_progress = false
+        trigger.off()
+        DEBUG("dimStep: currentLevel [currentLevel] is greater than last level [$state.lastLevel], cancel slow dimmer")
         sendNotificationEvent("Lights turned up, cancelling slow dimmage")
         return
     }
 */
    
     def newLevel = currentLevel - state.dimStep
-    log.debug "dimStep: newLevel     = $newLevel"
+    DEBUG("dimStep: newLevel     = $newLevel")
     
     if(newLevel < 1)
     {
@@ -183,8 +198,8 @@ def dimStep()
         state.slow_dim_in_progress = false
         DEBUG("\n" +
               "dimStep: next level less than 1 so turn it off...\n" +
-              "dimStep:     Time to complete:       ${total_time_min} min\n" +
-              "dimStep:     Time since last motion: ${time_since_last_motion} min\n")
+              "dimStep:     Time to complete:       " + String.format("%.1f min\n", total_time_min) +
+              "dimStep:     Time since last motion: " + String.format("%.1f min\n", time_since_last_motion))
     }
     else
     {
@@ -193,7 +208,7 @@ def dimStep()
         state.lastLevel = newLevel
  
         // re-schedule again in delay_seconds
-        log.debug "dimStep:  rescheduling in ${state.delay_seconds} seconds"
+        DEBUG("dimStep:  rescheduling in ${state.delay_seconds} seconds")
         runIn(state.delay_seconds, dimStep)
     }
 }
@@ -202,5 +217,7 @@ private def DEBUG(txt)
 {
     //log.debug ${app.label}
     log.debug(txt)
-    sendNotificationEvent(txt)
+    if( debugEnabled ) {
+        sendNotificationEvent(txt)
+    }
 }
