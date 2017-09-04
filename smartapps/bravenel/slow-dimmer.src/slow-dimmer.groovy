@@ -73,19 +73,23 @@ def motionHandler(evt) {
     
     DEBUG("-------------------------------------")
     DEBUG("motionHandler: slow_dim_in_progress=${state.slow_dim_in_progress}")
+    DEBUG("motionHandler: current switch value = ${dimmers[0].currentSwitch}")
     
-    if(state.slow_dim_in_progress)
-    {
-        DEBUG("motionHandler: Saw motion.  Extending time...")
-        state.last_motion = now()
-        if(dimmers[0].currentLevel < settings.dimLevelOnMotion)
-        {
-            DEBUG("motionHandler: bumping current level to at least ${settings.dimLevelOnMotion}")
-            dimmers.setLevel(settings.dimLevelOnMotion)
-        }
+    if(state.slow_dim_in_progress) {
+        if(dimmers[0].currentSwitch == "off") {
+            DEBUG("motionHandler: Confused as fuck.  motion handler has been called with slow dim in progress but the switch is fucking off")
+        } else {
+            DEBUG("motionHandler: Saw motion.  Extending time...")
+            state.last_motion = now()
+            if(dimmers[0].currentLevel < settings.dimLevelOnMotion)
+            {
+                DEBUG("motionHandler: bumping current level to at least ${settings.dimLevelOnMotion}")
+                dimmers.setLevel(settings.dimLevelOnMotion)
+            }
         
-        // (re)calculate amount to dim by and when to dim...
-        setupDimStep()
+            // (re)calculate amount to dim by and when to dim...
+            setupDimStep()
+        }
     }
 }
     
@@ -95,12 +99,16 @@ def triggerHandler(evt) {
     DEBUG("triggerHandler: Slow dim action started...")
    
     // kick off the dimmer...
-    state.slow_dim_in_progress = true
-    state.start_time           = now()
-    state.last_motion          = now()
+    if(dimmers[0].currentSwitch == "off") {
+        DEBUG("triggerHandler: Hey cockbag, the switch is already off...  Not doing a damn thing")
+    } else {
+        state.slow_dim_in_progress = true
+        state.start_time           = now()
+        state.last_motion          = now()
     
-    // (re)calculate amount to dim by and when to dim...
-    setupDimStep()
+        // (re)calculate amount to dim by and when to dim...
+        setupDimStep()
+    }
 }
 
 def dimmerOffHandler(evt) {

@@ -16,6 +16,9 @@
  *  Date: 2013-05-09
  */
  
+// TODO: This is a massively hacked up version of the smartapp provided by
+//       smartthings.  Much of this is my attempt at learning this wacky
+//       groovy language...  Maybe someday I'll clean it up and make it proper
 
 definition(
     name: "Left It Open",
@@ -50,58 +53,50 @@ preferences {
 }
 
 def installed() {
-	log.trace "installed()"
+	log.debug "installed()"
     updated()
 }
 
 def updated() {
-	log.trace "updated()"
+	log.debug "updated()"
     unschedule()
 	unsubscribe()
     resetState()
 	subscribe()
+    checkDoorOpenTooLong()
 }
 
 def resetState() {
     log.debug "resetState()"
     state.clear()
-    state.openTime     = [:]
-    state.lastWarnTime = [:]
-    for (contact in settings.contact_sensors)
-    {
-        log.debug contact
-        log.debug contact.contactState
-        if (contact.contactState && contact.contactState.value == "open" )
-        {
-            log.debug "OPEN"
+    state.openTime          = [:]
+    state.lastWarnTime      = [:]
+    state.warnPeriodMinutes = [:]
+    for (contact in settings.contact_sensors) {
+        log.debug "    --> Contact $contact -> $contact.contactState.value"
+        state.warnPeriodMinutes[contact.id] = warnPeriodMin
+        if (contact.contactState && contact.contactState.value == "open" ) {
             state.openTime[contact.id] = contact.contactState.rawDateCreated.time
         }
-        else
-        {
-            log.debug "CLOSED"
-        }
     }
-    log.debug state
-    checkDoorOpenTooLong()
 }
 
 def subscribe() {
     log.debug "subscribe()"
 	subscribe(settings.contact_sensors, "contact.open",   doorOpen)
 	subscribe(settings.contact_sensors, "contact.closed", doorClosed)
-    log.debug "    --> subscribe finished"
 }
 
 def doorOpen(evt)
 {
-	log.trace "doorOpen($evt.device -> $evt.name: $evt.value)"
+	log.debug "doorOpen($evt.device -> $evt.name: $evt.value)"
     state.openTime[evt.deviceId] = now()
     checkDoorOpenTooLong()
 }
 
 def doorClosed(evt)
 {
-	log.trace "doorClosed($evt.device -> $evt.name: $evt.value)"
+	log.debug "doorClosed($evt.device -> $evt.name: $evt.value)"
     
     if (state.lastWarnTime[evt.deviceId])
         log.debug "We have actually issued a warning for this one..."
@@ -112,6 +107,7 @@ def doorClosed(evt)
         sendClosedMessage(evt.device)
     state.openTime.remove(evt.deviceId)
     state.lastWarnTime.remove(evt.deviceId)
+    state.warnPeriodMinutes[evt.deviceId] = warnPeriodMin
     
     if (state.lastWarnTime[evt.deviceId])
         log.debug "IT STILL THERE!"
@@ -123,7 +119,7 @@ def doorClosed(evt)
 
 def checkDoorOpenTooLong()
 {
-    log.trace "checkDoorOpenTooLong()"
+    log.debug "checkDoorOpenTooLong()"
 
     def nextRunMinList = []
    
@@ -136,7 +132,7 @@ def checkDoorOpenTooLong()
         log.debug "    OPEN CONTACT: ${contact.displayName}"
         
         def openTimeMin = (now() - state.openTime[contact.id]) / 60000
-        def nextRunMin  = warnPeriodMin
+        def nextRunMin  = state.warnPeriodMinutes[contact.id]
         
         log.debug "        --> Opened ${openTimeMin} minutes ago"
        
@@ -146,15 +142,19 @@ def checkDoorOpenTooLong()
             // or check to see when we need to run again
             def timeSinceLastWarnMin = (now() - state.lastWarnTime[contact.id]) / 60000
             log.debug "        --> this contact had already issued a warning ${timeSinceLastWarnMin} minutes ago"
-            if(timeSinceLastWarnMin > warnPeriodMin)
+            if(timeSinceLastWarnMin > state.warnPeriodMinutes[contact.id])
             {
                 log.debug "       --> send notification... again!"
                 sendOpenMessage(contact)
+                // bump the warn period so we don't annoy ourselves
+                state.warnPeriodMinutes[contact.id] = state.warnPeriodMinutes[contact.id] * 2
+                log.debug "   warn period for ${contact.displayName} updated to ${state.warnPeriodMinutes[contact.id]}"
+                nextRunMin = state.warnPeriodMinutes[contact.id]
             }
             else
             {
-                nextRunMin = warnPeriodMin - timeSinceLastWarnMin
-                log.debug "       --> Not time yet for warning. Run again in ${nextRunMin} minutes"
+                nextRunMin = state.warnPeriodMinutes[contact.id] - timeSinceLastWarnMin
+                log.debug "       --> Not time yet for warning."
             }
         }
         else if(openTimeMin > openThresholdMin)
@@ -184,6 +184,7 @@ def checkDoorOpenTooLong()
     else
     {
         log.debug "NOTHING LEFT TO CHECK..."
+        unschedule()
     }
     
     log.debug "-------------------------------------"
