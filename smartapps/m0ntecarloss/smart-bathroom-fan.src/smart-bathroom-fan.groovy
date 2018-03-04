@@ -54,7 +54,7 @@ preferences {
      
     section(hideable: true, "Controls or something") {
     
-        input "minPerHour", "number", title: "Hourly Budget", description: "How many minutes per hour to run fan for", required: true
+        input "fanMinPerHour", "number", title: "Hourly Budget", description: "How many minutes per hour to run fan for", required: true
         
         input "minAfterLightOn", "number", title: "Minutes After Light On", description: "How many minutes after light turned on before fan turns on", required: false
      
@@ -67,35 +67,56 @@ preferences {
 
 }
 
+//------------------------------------------------------------------------------
+
 def installed() {
 	DEBUG("installed")
 
 	initialize()
 }
 
+//------------------------------------------------------------------------------
+
 def updated() {
     DEBUG("updated")
 
+    DEBUG("Calling unsubscribe")
 	unsubscribe()
+    DEBUG("Calling initialize")
 	initialize()
 }
 
+//------------------------------------------------------------------------------
+
 def initialize() {
-    def debug_string = new String()
+    String debug_string = "initialize:\n"
     
     debug_string += "settings = ${settings}\n"
  
-    state.turnOnScheduled  = false
-    state.turnOffScheduled = false
-    state.last_fan_on_time = now()
+    state.turnOnScheduled                        = false
+    state.turnOffScheduled                       = false
+    state.last_fan_on_time                       = now()
+    state.this_hour_start_time                   = now()
     state.total_fan_runtime_this_hour_in_seconds = 0.0
+    state.fan_locked                             = true
+    state.time_left_in_quota                     = 0
+    state.total_hours_logged                     = -1 // Because we call hourlyHandler in this routine which isn't quite right...
+    state.total_runtime_minutes_forever          = 0
+    state.average_min_per_hour                   = 0.0
+
+    //def xxx = new Date()
+    //def yyy = xxx.getTimezoneOffset()
+    //def wtf = xxx.getHours() - (xxx.getTimezoneOffset() / 60)
+    //debug_string += "yyy: ${yyy}\n"
+    //debug_string += "wtf: ${wtf}\n"
+    //def fart = Calendar.getInstance(location.timeZone, Locale.US)
+    //debug_string += "fart " + fart.format("yyyy/MM/dd HH:mm:ss") + " ${fart.HOUR}\n"
     
     // set up hourly schedule
+    unschedule()
     unschedule(hourlyHandler)
     runEvery1Hour(hourlyHandler)
-    
-	// TODO: subscribe to attributes, devices, locations, etc.
-    
+   
     subscribe (lightSwitch,    "switch.on",      lightHandler)
     subscribe (lightSwitch,    "switch.off",     lightHandler)
     subscribe (fanSwitch,      "switch.on",      fanOnHandler)
@@ -103,70 +124,77 @@ def initialize() {
     subscribe (contactSensors, "contact.open",   contactOpenHandler)
 	subscribe (contactSensors, "contact.closed", contactCloseHandler)
    
-    // TODO: temporary
-    hourlyHandler()
+    DEBUG(debug_string)
     
-    DEBUG("initialize:\n ${debug_string}")
+    // TODO: temporary
+    DEBUG("Calling hourlyHandler as part of setup...\n")
+    hourlyHandler()
+    runIn(180, hourlyHandler)
 }
 
 //------------------------------------------------------------------------------
 
 def lightHandler(evt) {
-    def debug_string = new String()
+    String debug_string = "lightHandler:\n"
     
     debug_string += "light value: ${lightSwitch.currentSwitch}"
-    DEBUG("lightHandler:\n ${debug_string}")
+    DEBUG(debug_string)
     
     if(lightSwitch.currentSwitch == "on") {
-        //debug_string += "requesting fan on in ${minAfterLightOn} minutes\n"
         scheduleFanOn(minAfterLightOn)
     } else {
-        //debug_string += "requesting fan off in ${minAfterLightOff} minutes\n"
         scheduleFanOff(minAfterLightOff)
     }
 }
 
+//------------------------------------------------------------------------------
+
 def scheduleFanOn(min_to_wait) {
-    def debug_string  = new String()
+    String debug_string = "scheduleFanOn:\n"
     def ok_to_doit = true
    
-    debug_string += "Checking if OK to schedule fan turn on\n"
-    debug_string += "Min to wait:       ${min_to_wait}\n"
-    debug_string += "Turn ON  Already scheduled: ${state.turnOnScheduled}\n"
-    debug_string += "Turn OFF Already scheduled: ${state.turnOffScheduled}\n"
+    debug_string += "    Checking if OK to schedule fan turn ON\n"
+    debug_string += "    Min to wait:                ${min_to_wait}\n"
+    debug_string += "    Turn ON  Already scheduled: ${state.turnOnScheduled}\n"
+    debug_string += "    Turn OFF Already scheduled: ${state.turnOffScheduled}\n"
+    debug_string += "    Fan locked on:              ${state.fan_locked}\n"
     
     if(state.turnOnScheduled) {
-        debug_string += "We have already scheduled fan to turn off so no...\n"
+        debug_string += "    We have already scheduled fan to turn on so no...\n"
         ok_to_doit = false
     }
   
     // check light sensors status
-    debug_string += "Light Sensor is currently: ${lightSwitch.currentSwitch}\n"
+    debug_string += "    Light Sensor is currently: ${lightSwitch.currentSwitch}\n"
     if(lightSwitch.currentSwitch == "on") {
     }
     
     // check contact sensors status
     for(xxx in contactSensors) {
-        debug_string += "${xxx.device.displayName} is currently: ${xxx.currentContact}\n"
+        debug_string += "    ${xxx.device.displayName} is currently: ${xxx.currentContact}\n"
     }
 
-    debug_string += "OK to turn on: ${ok_to_doit}\n"
+    debug_string += "    Fan Switch is currently: ${fanSwitch.currentSwitch}\n"
+    
+    debug_string += "    OK to turn on: ${ok_to_doit}\n"
     
     if(ok_to_doit) {
-        debug_string += "OK SO DO IT\n"
-        unschedule(turnFanOff)
+        debug_string += "    OK SO DO IT\n"
+        
         state.turnOffScheduled = false
+        state.turnOnScheduled  = false
+        unschedule(turnFanOff)
+        unschedule(turnFanOn)
         
         // check fan status before actually scheduling...
-        debug_string += "Fan Switch is currently: ${fanSwitch.currentSwitch}\n"
         if(fanSwitch.currentSwitch == "on") {
-            debug_string += "Hey fucker, the fan switch is already ${fanSwitch.currentSwitch}\n"
+            debug_string += "    Hey fucker, the fan switch is already ${fanSwitch.currentSwitch}\n"
         } else if (min_to_wait > 0) {
-            debug_string += "Scheduled fan to turn ON in ${min_to_wait} min"
+            debug_string += "    Scheduled fan to turn ON in ${min_to_wait} min"
             state.turnOnScheduled = true
             runIn(min_to_wait * 60, turnFanOn)
         } else {
-            debug_string += "Turning fan ON immediately and stuff"
+            debug_string += "    Turning fan ON immediately and stuff"
             turnFanOn()
         }
     }
@@ -184,122 +212,305 @@ def scheduleFanOn(min_to_wait) {
     }
     */
     
-    DEBUG("scheduleFanOn:\n ${debug_string}")
+    DEBUG(debug_string)
 }
 
+//------------------------------------------------------------------------------
+
 def scheduleFanOff(min_to_wait) {
-    def debug_string = new String()
+    String debug_string = "scheduleFanOff:\n"
     def ok_to_doit = true
     
-    debug_string += "Checking if OK to schedule fan turn off\n"
-    debug_string += "Min to wait:       ${min_to_wait}\n"
-    debug_string += "Turn ON  Already scheduled: ${state.turnOnScheduled}\n"
-    debug_string += "Turn OFF Already scheduled: ${state.turnOffScheduled}\n"
+    debug_string += "    Checking if OK to schedule fan turn OFF\n"
+    debug_string += "    Min to wait:                ${min_to_wait}\n"
+    debug_string += "    Turn ON  Already scheduled: ${state.turnOnScheduled}\n"
+    debug_string += "    Turn OFF Already scheduled: ${state.turnOffScheduled}\n"
+    debug_string += "    Fan locked on:              ${state.fan_locked}\n"
+   
+    if(state.fan_locked) {
+        debug_string += "    Fan is locked on for hourly quota so no...\n"
+        ok_to_doit = false
+    }
     
     if(state.turnOffScheduled) {
-        debug_string += "We have already scheduled fan to turn off so no...\n"
+        debug_string += "    We have already scheduled fan to turn off so no...\n"
         ok_to_doit = false
     }
   
     // check light sensors status
-    debug_string += "Light switch is currently: ${lightSwitch.currentSwitch}\n"
+    debug_string += "    Light switch is currently: ${lightSwitch.currentSwitch}\n"
     if(lightSwitch.currentSwitch == "on") {
-        debug_string += "light sensor [${lightSwitch.device.displayName}] is still on so no...\n"
+        debug_string += "    light sensor [${lightSwitch.device.displayName}] is still on so no...\n"
         ok_to_doit = false
     }
     
     // check contact sensors status
     for(xxx in contactSensors) {
-        debug_string += "${xxx.device.displayName} is currently: ${xxx.currentContact}\n"
+        debug_string += "    ${xxx.device.displayName} is currently: ${xxx.currentContact}\n"
         if(xxx.currentContact == "open") {
-            debug_string += "contact sensor [${xxx.device.displayName}] is still open so no...\n"
+            debug_string += "    contact sensor [${xxx.device.displayName}] is still open so no...\n"
             ok_to_doit = false
         }
     }
-  
-    debug_string += "OK to turn off: ${ok_to_doit}\n"
+    
+    debug_string += "    Fan Switch is currently: ${fanSwitch.currentSwitch}\n"
+    
+    debug_string += "    OK to turn off: ${ok_to_doit}\n"
     
     if(ok_to_doit) {
-        debug_string += "OK SO DO IT\n"
+        debug_string += "    OK SO DO IT\n"
+        
+        state.turnOnScheduled  = false
+        state.turnOffScheduled = false
         unschedule(turnFanOn)
-        state.turnOnScheduled = false
+        unschedule(turnFanOff)
         
         // check fan status before actually scheduling...
-        debug_string += "Fan Switch is currently: ${fanSwitch.currentSwitch}\n"
         if(fanSwitch.currentSwitch == "off") {
-            debug_string += "Hey fucker, the fan switch is already ${fanSwitch.currentSwitch}\n"
+            debug_string += "    Hey fucker, the fan switch is already ${fanSwitch.currentSwitch}\n"
         } else if(min_to_wait > 0) {
+            debug_string += "    Scheduled fan to turn OFF in ${min_to_wait} min"
             state.turnOffScheduled = true
-            debug_string += "Scheduled fan to turn OFF in ${min_to_wait} min"
             runIn(min_to_wait * 60, turnFanOff)
         } else {
-            debug_string += "Turning fan OFF immediately and stuff"
+            debug_string += "    Turning fan OFF immediately and stuff"
             turnFanOff()
         }
     }
         
-    DEBUG("scheduleFanOff:\n ${debug_string}")
-}
-
-def fanOnHandler(evt) {
-    def debug_string = new String()
-    
-    debug_string += "fanOnHandler:\n"
-    
-    state.last_fan_on_time = now()
-    
-    unschedule(turnFanOff)
-    state.turnOffScheduled = false
-    
-    unschedule(turnFanOn)
-    state.turnOnScheduled  = false
-    
     DEBUG(debug_string)
-}
-
-def fanOffHandler(evt) {
-    def debug_string = new String()
-    
-    debug_string += "fanOffHandler:\n"
-    
-    def fanRuntimeSeconds = (now() - state.last_fan_on_time) / 1000.0
-    
-    state.total_fan_runtime_this_hour_in_seconds = state.total_fan_runtime_this_hour_in_seconds + fanRuntimeSeconds
-    debug_string += "Fan was on for ${fanRuntimeSeconds} seconds.  Total time this hour = ${state.total_fan_runtime_this_hour_in_seconds}\n"
-        
-    unschedule(turnFanOff)
-    state.turnOffScheduled = false
-    
-    DEBUG(debug_string)
-}
-
-def contactOpenHandler(evt) {
-    def debug_string  = new String()
-    debug_string += "requesting fan on immediately\n"
-    scheduleFanOn(0)
-    DEBUG("contactOpenHandler:\n ${debug_string}")
-}
-
-def contactCloseHandler(evt) {
-    def debug_string  = new String()
-    debug_string += "requesting fan off in ${minAfterLightOff} minutes\n"
-    scheduleFanOff(minAfterLightOff)
-    DEBUG("contactCloseHandler:\n ${debug_string}")
-}
-
-def turnFanOn() {
-    DEBUG("turnFanOn")
-    fanSwitch.on()
-}
-
-def turnFanOff() {
-    DEBUG("turnFanOff")
-    // TODO: Check if we really should for realz turn off the fan now
-    fanSwitch.off()
 }
 
 //------------------------------------------------------------------------------
+
+def fanOnHandler(evt) {
+    String debug_string = "fanOnHandler:\n"
+    
+    state.last_fan_on_time = now()
+    state.turnOffScheduled = false
+    state.turnOnScheduled  = false
+    
+    unschedule(turnFanOff)
+    unschedule(turnFanOn)
+    
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
+def fanOffHandler(evt) {
+    String debug_string = "fanOffHandler:\n"
+    
+    def fanRuntimeSeconds = (now() - state.last_fan_on_time) / 1000.0
+    state.total_fan_runtime_this_hour_in_seconds = state.total_fan_runtime_this_hour_in_seconds + fanRuntimeSeconds
+    
+    debug_string += "Fan was on for ${fanRuntimeSeconds} seconds.  Total time this hour = ${state.total_fan_runtime_this_hour_in_seconds}\n"
+        
+    state.turnOffScheduled = false
+    state.turnOnScheduled  = false
+    state.fan_locked       = false
+    
+    unschedule(turnFanOff)
+    unschedule(turnFanOn)
+    
+    DEBUG(debug_string)
+   
+    // See if we need to reschedule a time to turn
+    // fan back on to meet hourly quota
+    schedule_next_fan_on()
+}
+
+//------------------------------------------------------------------------------
+
+def contactOpenHandler(evt) {
+    String debug_string = "contactOpenHandler:\n"
+    debug_string += "requesting fan on immediately\n"
+    DEBUG(debug_string)
+    scheduleFanOn(0)
+}
+
+//------------------------------------------------------------------------------
+
+def contactCloseHandler(evt) {
+    String debug_string = "contactCloseHandler:\n"
+    debug_string += "requesting fan off in ${minAfterLightOff} minutes\n"
+    DEBUG(debug_string)
+    scheduleFanOff(minAfterLightOff)
+}
+
+//------------------------------------------------------------------------------
+
+def turnFanOn() {
+    String debug_string = "turnFanOn:\n"
+    fanSwitch.on()
+    try {
+        debug_string += "sending poll command to switches...\n"
+        fanSwitch.refresh(2000)
+        lightSwitch.refresh(2000)
+    } catch (e) {
+        debug_string += "oops\n"
+        log.debug("oops", e)
+    }
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
+def turnFanOff() {
+    String debug_string = "turnFanOff:\n"
+    fanSwitch.off()
+    try {
+        debug_string += "sending poll command to switches...\n"
+        fanSwitch.refresh(2000)
+        lightSwitch.refresh(2000)
+    } catch (e) {
+        debug_string += "oops\n"
+        log.debug("oops", e)
+    }
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
+def turnFanOnForQuota() {
+    String debug_string = "turnFanOnForQuota:\n"
+    debug_string += "Time needed to run in seconds = ${state.time_left_in_quota}\n"
+    state.fan_locked = true
+    fanSwitch.on()
+    try {
+        debug_string += "sending poll command to switches...\n"
+        fanSwitch.refresh(2000)
+        lightSwitch.refresh(2000)
+    } catch (e) {
+        debug_string += "oops\n"
+        log.debug("oops", e)
+    }
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
 def hourlyHandler(evt) {
+    
+    String debug_string = "hourlyHandler:\n"
+    
+    try {
+    
+    // If fan switch is still on, then reset the last on time to now since we've already
+    // addressed this past hours runtime
+    if(fanSwitch.currentSwitch == "on") {
+        def curr_time = now()
+        debug_string += "Fan switch is still on so resetting last on time to now...\n"
+        debug_string += "  last_fan_on_time = ${state.last_fan_on_time}\n"
+        debug_string += "  now()            = ${curr_time}\n"
+        
+        def fanRuntimeSeconds = (now() - state.last_fan_on_time) / 1000.0
+        state.total_fan_runtime_this_hour_in_seconds = state.total_fan_runtime_this_hour_in_seconds + fanRuntimeSeconds
+        state.last_fan_on_time = now()
+    } else {
+        debug_string += "Fan switch is off.  No need to mess with last fan on time...\n"
+    }
+ 
+    Integer minutes = state.total_fan_runtime_this_hour_in_seconds / 60
+    Integer seconds = state.total_fan_runtime_this_hour_in_seconds - (minutes * 60)
+    
+    debug_string += "HOURLY: Total runtime = ${state.total_fan_runtime_this_hour_in_seconds}\n"
+    debug_string += "HOURLY: Total runtime = ${minutes} minutes ${seconds} seconds\n"
+   
+    state.total_hours_logged = state.total_hours_logged + 1
+    if(state.total_hours_logged > 0) {
+        state.total_runtime_minutes_forever = state.total_runtime_minutes_forever + (state.total_fan_runtime_this_hour_in_seconds / 60)
+        state.average_min_per_hour = state.total_runtime_minutes_forever / state.total_hours_logged
+        debug_string += "Average hourly runtime:\n"
+        debug_string += "    Total hours logged: ${state.total_hours_logged}\n"
+        debug_string += "    Total minutes ran:  ${state.total_runtime_minutes_forever}\n"
+        debug_string += "    AVERAGE PER HOUR:   ${state.average_min_per_hour} min/hr\n"
+    }
+ 
+    if(state.fan_locked) {
+        debug_string += "Fan was on to meet quota.  It's OK to turn off now...\n"
+        state.fan_locked = false
+        scheduleFanOff(0)
+    }
+    
+    // Clear out data for a new hour
+    state.total_fan_runtime_this_hour_in_seconds = 0
+    state.this_hour_start_time                   = now()
+  
+    // Schedule fan turn on time in case nothing else
+    // triggers the fan to turn on so we can meet
+    // the hourly quota
+    schedule_next_fan_on()
+    
+    } catch(e) {
+        DEBUG("shit.  bad stuff in hourly handler...\n${e}\n")
+    }
+    
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
+private def schedule_next_fan_on() {
+
+    String debug_string = "schedule_next_fan_on:\n"
+   
+    if(fanMinPerHour <= 0) {
+        debug_string += "fanMinPerHour value [${fanMinPerHour}] is invalid or 0.  Not doing hourly budget...\n"
+    } else {
+        def runtime_left_secs         = (fanMinPerHour * 60) - state.total_fan_runtime_this_hour_in_seconds
+        def hour_start_epoch          = state.this_hour_start_time / 1000.0
+        def hour_end_epoch            = hour_start_epoch + 3600
+        def next_time_to_run_epoch    = hour_end_epoch - runtime_left_secs
+        def curr_time_epoch           = now() / 1000.0
+        def run_in_secs               = next_time_to_run_epoch - curr_time_epoch
+        def seconds_left_in_this_hour = hour_end_epoch - curr_time_epoch
+     
+        debug_string += "runtime_left_secs         = ${runtime_left_secs}\n"
+        debug_string += "hour_start_epoch          = ${hour_start_epoch}\n"
+        debug_string += "hour_end_epoch            = ${hour_end_epoch}\n"
+        debug_string += "next_time_to_run_epoch    = ${next_time_to_run_epoch}\n"
+        debug_string += "curr_time_epoch           = ${curr_time_epoch}\n"
+        debug_string += "run_in_secs               = ${run_in_secs}\n"
+        debug_string += "seconds_left_in_this_hour = ${seconds_left_in_this_hour}\n"
+    
+        def fudge = 0.0
+        if(state.average_min_per_hour > fanMinPerHour + 1) {
+            fudge = 60.0
+            debug_string += "Average minutes per hour ${state.average_min_per_hour} > ${fanMinPerHour + 1}.\n"
+        } else if (state.average_min_per_hour > fanMinPerHour) {
+            fudge = (state.average_min_per_hour - ${fanMinPerHour}) * 60
+            debug_string += "Average minutes per hour ${state.average_min_per_hour} > ${fanMinPerHour} by less than 1 minute\n"
+        }
+        debug_string += "Fudge factor: ${fudge}\n"
+        run_in_secs = run_in_secs + fudge
+        debug_string += "New run_in_secs = ${run_in_secs}\n"
+        
+        if(runtime_left_secs <= 0) {
+            debug_string += "Looks like we used up our quota for this hour because runtime_left_secs <= 0.  Good job!  No need to reschedule.\n"
+        } else {
+            debug_string += "Rescheduling to run in ${run_in_secs} seconds to make sure we meet our quota...\n"
+            state.time_left_in_quota = runtime_left_secs
+            runIn(run_in_secs, turnFanOnForQuota)
+        }
+    }
+    
+    DEBUG(debug_string)
+}
+
+//------------------------------------------------------------------------------
+
+private def DEBUG(txt) {
+    //log.debug ${app.label}
+    log.debug(txt)
+    if( debugEnabled ) {
+        sendNotificationEvent("Smart Bathroom Fan: " + txt)
+    }
+}
+//------------------------------------------------------------------------------
+
+/*
+def OLDhourlyHandler(evt) {
     
     // TODO: This whole thing is no good.  We don't want to check after an hour is over to see
     //       how much time the fan SHOULD have been on in that hour.
@@ -362,21 +573,7 @@ def hourlyHandler(evt) {
     }
     
     debug_string += "TOTAL ON TIME: ${total_secs}\n"
-    debug_string += "TOTAL ON TIME NEW WAY: ${state.total_fan_runtime_this_hour_in_seconds}\n"
-   
-    state.total_fan_runtime_this_hour_in_seconds = 0
     
     DEBUG("hourlyHandler:\n ${debug_string}")
 }
-
-//------------------------------------------------------------------------------
-//------------------------------------------------------------------------------
-
-//------------------------------------------------------------------------------
-private def DEBUG(txt) {
-    //log.debug ${app.label}
-    log.debug(txt)
-    if( debugEnabled ) {
-        sendNotificationEvent("Smart Bathroom Fan: " + txt)
-    }
-}
+*/
