@@ -47,24 +47,28 @@ preferences {
     }
     
     section(hideable: True, "Debug") {
-        input "debugEnabled", "bool", title: "Debug Enabled", required: True
+        input "debugEnabled", "bool", title: "Debug Enabled", required: true
     }
 }
 
 def installed() {
+    DEBUG("installed:")
     initialize()
 }
 
 def updated() {
+    DEBUG("updated:")
     unsubscribe()
     initialize()
 }
 
 def initialize() {
-    DEBUG("initialize: xxx minutes=$minutes")
-    subscribe(trigger, "switch.on",     triggerHandler)
-    subscribe(motions, "motion.active", motionHandler)
-    subscribe(dimmers, "switch.off",    dimmerOffHandler)
+    DEBUG("initialize: ${settings}")
+    subscribe(trigger, "switch.on",       triggerHandler)
+    subscribe(motions, "motion.active",   motionHandler)
+    subscribe(dimmers, "switch.off",      dimmerOffHandler)
+    subscribe(dimmers, "switch.on",       dimmerOnHandler)
+    subscribe(dimmers, "switch.setLevel", dimmerLevelHandler)
     state.slow_dim_in_progress = false
     state.start_time = now()
 }
@@ -111,12 +115,25 @@ def triggerHandler(evt) {
     }
 }
 
+def dimmerOnHandler(evt) {
+    DEBUG("-------------------------------------")
+    DEBUG("dimmerOnHandler:")
+}
+
 def dimmerOffHandler(evt) {
     DEBUG("-------------------------------------")
     DEBUG("dimmerOffHandler: dimmer was turned off.  Cancel slow dim")
     state.slow_dim_in_progress = false
     //trigger.off()
     unschedule(dimstep)
+}
+
+def dimmerLevelHandler(evt) {
+    DEBUG("-------------------------------------")
+    DEBUG("dimmerLevelHandler:")
+    def level = evt.value.toFloat()
+	level = level.toInteger()
+    DEBUG("dimmerLevelHandler: New level: ${level}")
 }
 
 def setupDimStep()

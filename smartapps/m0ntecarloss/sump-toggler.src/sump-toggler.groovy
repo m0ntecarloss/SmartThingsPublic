@@ -29,7 +29,7 @@ preferences {
         input "sump_switch", "capability.switch", title: "Which?", required: true, multiple: true
 	}
     section("How often should sump switch be turned on?") {
-        input name: "cycletime", type: "enum", title: "Select", options: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "1 hour", "3 hours"], required: true
+        input name: "cycletime", type: "enum", title: "Select", options: ["5 minutes", "10 minutes", "15 minutes", "30 minutes", "1 hour", "3 hours", "4 hours"], required: true
     }
     section("Minutes to run when toggled?") {
         input "runtime_minutes", "number", title: "Minutes?", required: true
@@ -48,6 +48,8 @@ preferences {
 def installed() {
 	DEBUG("Installed with settings: ${settings}")
 
+	unsubscribe()
+    unschedule()
 	initialize()
 }
 
@@ -55,6 +57,7 @@ def updated() {
 	DEBUG("Updated with settings: ${settings}")
 
 	unsubscribe()
+    unschedule()
 	initialize()
 }
 
@@ -100,10 +103,14 @@ def initialize() {
             DEBUG("initialize: runEvery1Hour(turnOn)")
             runEvery1Hour(turnOn)
             break
-        //case "3 hours":
-            //DEBUG("initialize: runEvery3Hours(turnOn)")
-            //runEvery3Hours(turnOn)
-            //break
+        case "3 hours":
+            DEBUG("initialize: runEvery3Hours(turnOn)")
+            runEvery3Hours(turnOn)
+            break
+        case "4 hours":
+            DEBUG("initialize: schedule(15 29 2,6,10,14,18,22 * * ?, turnOn)")
+            schedule("15 29 2,6,10,14,18,22 * * ?", turnOn)
+            break
         default:
             DEBUG("initialize:  *** INVALID VALUE FOR cycletime of ${settings.cycletime} ***")
             DEBUG("initialize:  *** USING 30 MINUTES                                     ***")
@@ -124,16 +131,28 @@ def switchOnHandler(evt) {
     
 }
 
+def turnOff2() {
+    DEBUG("turnOff2 called")
+    for(xxx in sump_switch)
+        DEBUG("turnOff2:    switch [${xxx.displayName}] is [${xxx.currentSwitch}]")
+    sump_switch.off()
+}
+
 def turnOff() {
     DEBUG("turnOff called")
     for(xxx in sump_switch)
         DEBUG("turnOff:    switch [${xxx.displayName}] is [${xxx.currentSwitch}]")
     sump_switch.off()
+    DEBUG("turnOff:    scheduling turn off in 90 seconds as a precaution")
+    runIn(90, turnOff2)
 }
 
 def turnOn() {
     DEBUG("turnOn called")
     def OK = true
+ 
+    unschedule("turnOff")
+    unschedule("turnOff2")
     
     for(xxx in temp_sensors) {
         def curr_temp = xxx.latestValue("temperature")
