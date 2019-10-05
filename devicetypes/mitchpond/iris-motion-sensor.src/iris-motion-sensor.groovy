@@ -228,33 +228,19 @@ def getTemperature(value) {
 }
 
 private Map getBatteryResult(rawValue) {
-	def linkText = getLinkText(device)
+	def linkText        = getLinkText(device)
+	def volts           = rawValue / 10
+    def minVolts        = 2.1
+    def maxVolts        = 3.0
+    def batteryPercent  = (Integer)(100.0 * (volts - minVolts) / (maxVolts - minVolts))
 
-	def result = [
-		name: 'battery',
-		value: '--'
-	]
-
-	def volts = rawValue / 10
-	def descriptionText // what?  I don't understand how this is part of 'result'
+    log.debug "getBatteryResult: Raw=${rawValue}  volts=${volts}  percent=${batteryPercent}"
     
-    log.debug "getBatteryResult: Raw=${rawValue}  volts=${volts}"
-
-	if (rawValue == 0) {}
-	else {
-		if (volts > 3.5) {
-			result.descriptionText = "${linkText} battery has too much power (${volts} volts)."
-		}
-		else if (volts > 0){
-			def minVolts = 2.1
-			def maxVolts = 3.0
-			def pct = (volts - minVolts) / (maxVolts - minVolts)
-			result.value = Math.min(100, (int) pct * 100)
-			result.descriptionText = "${linkText} battery was ${result.value}%"
-		}
-	}
-
-	return result
+    return [
+        name: 'battery',
+        value: batteryPercent,
+        descriptionText: "${linkText} battery was ${volts}V (${batteryPercent}%)"
+    ]
 }
 
 private Map getTemperatureResult(value) {
@@ -266,7 +252,7 @@ private Map getTemperatureResult(value) {
 		value = v + offset
 	}
 	log.debug "getTemperatureResult: value=${original_value} linkText=${linkText} tempOffset=${tempOffset} value=${value}"
-	def descriptionText = "${linkText} was fucking ${value}°${temperatureScale}"
+	def descriptionText = "${linkText} was ${value}°${temperatureScale}"
 	return [
 		name: 'temperature',
 		value: value,
@@ -291,7 +277,6 @@ def refresh() {
 		"st rattr 0x${device.deviceNetworkId} 1 0x402 0", "delay 200",
 		"st rattr 0x${device.deviceNetworkId} 1 1 0x20", "delay 200"
 	]
-
 	return refreshCmds + enrollResponse()
 }
 

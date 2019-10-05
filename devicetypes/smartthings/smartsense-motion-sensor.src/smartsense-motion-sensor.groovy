@@ -49,12 +49,13 @@ metadata {
 		}
 		section {
 			input title: "Temperature Offset", description: "This feature allows you to correct any temperature variations by selecting an offset. Ex: If your sensor consistently reports a temp that's 5 degrees too warm, you'd enter '-5'. If 3 degrees too cold, enter '+3'.", displayDuringSetup: false, type: "paragraph", element: "paragraph"
-			input "tempOffset", "number", title: "Degrees", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: true
+            input "tempOffset", "number", title: "Temperature Offset", description: "Adjust temperature by this many degrees", range: "*..*", displayDuringSetup: false
 
-            input "maxTempReportTime", "number", title: "Max Temp Report Time", description: "Max time between temp reports (seconds)", range: "30..3600", defaultValue: 3600, displayDuringSetup: true
-            input "minTempReportTime", "number", title: "Min Temp Report Time", description: "Min time between temp reports (seconds)", range: "30..3600", defaultValue: 300,  displayDuringSetup: true
-            input "triggerTemp",       "number", title: "Trigger Temp",         description: "Temp Change Required to Trigger Update (F)", range: "0.1..5", defaultValue: 1,   displayDuringSetup: true
+            input "maxTempReportTime", "number",  title: "Max Temp Report Time", description: "Max time between temp reports (seconds)",    range: "1..3600", defaultValue: 3600, displayDuringSetup: false
+            input "minTempReportTime", "number",  title: "Min Temp Report Time", description: "Min time between temp reports (seconds)",    range: "1..3600", defaultValue: 300,  displayDuringSetup: false
+            input "triggerTemp",       "decimal", title: "Trigger Temp",         description: "Temp Change Required to Trigger Update (F)",                    defaultValue: 0.25, displayDuringSetup: false
 		}
+        
 	}
 
 	tiles(scale: 2) {
@@ -83,9 +84,12 @@ metadata {
 		standardTile("refresh", "device.refresh", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 			state "default", action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
+        standardTile("configure", "device.motion", inactiveLabel: false, decoration: "flat") {
+            state "configure", label:'', action:"configuration.configure", icon:"st.secondary.configure"
+        }
 
 		main(["motion", "temperature"])
-		details(["motion", "temperature", "battery", "refresh"])
+		details(["motion", "temperature", "battery", "refresh", "configure"])
 	}
 }
 
@@ -227,10 +231,14 @@ private Map parseIasMessage(String description) {
 }
 
 def getTemperature(value) {
+    log.debug "getTemperature: value = ${value}"
 	def celsius = Integer.parseInt(value, 16).shortValue() / 100
 	if(getTemperatureScale() == "C"){
+        log.debug "getTemperature: return value = ${celsius}"
 		return celsius
 	} else {
+		def return_value = celsiusToFahrenheit(celsius) as Integer
+        log.debug "getTemperature: return value = ${return_value}"
 		return celsiusToFahrenheit(celsius) as Integer
 	}
 }
@@ -328,11 +336,45 @@ def refresh() {
 
 def configure() {
 
+    log.debug "configure called"
+
+    // sanity check the preferences
+    if (maxTempReportTime == null ||
+        maxTempReportTime < 0     ||
+        maxTempReportTime > 3600)
+    {
+        log.error "Invalid value for maxTempReportTime [${maxTempReportTime}].  Defaulting to 3600"
+        //settings.maxTempReportTime = 3600
+        settings.maxTempReportTime = 10
+    }
+    if (minTempReportTime == null ||
+        minTempReportTime < 0     ||
+        minTempReportTime > 300)
+    {
+        log.error "Invalid value for minTempReportTime [${minTempReportTime}].  Defaulting to 300"
+        //settings.minTempReportTime = 300
+        settings.minTempReportTime = 5
+    }
+    if (triggerTemp == null ||
+        triggerTemp <= 0    ||
+        triggerTemp > 10)
+    {
+        log.error "Invalid value for triggerTemp [${triggerTemp}].  Defaulting to 1.0"
+        settings.triggerTemp = 1.0
+    }
+           
+    log.debug "maxTempReportTime: ${maxTempReportTime}"
+    log.debug "minTempReportTime: ${minTempReportTime}"
+    log.debug "triggerTemp:       ${triggerTemp}"
+    
     // What is this?!?!?
 	sendEvent(name: "checkInterval", value: 7200, displayed: false)
 
-    def xxx = triggerTemp * 5.0 / 9
-    log.debug "triggerTemp: ${triggerTemp}   xxx: ${xxx}"
+    def junk = triggerTemp
+    def xxx = (int)(junk * 100 * 5.0 / 9)
+    def yyy = String.format("%04x", xxx)
+    def zzz = swapEndianHex(yyy)
+    log.debug "triggerTemp: ${junk}   xxx: ${xxx}    yyy: ${yyy}      zzz: ${zzz}"
 
 	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
 	log.debug "Configuring Reporting, IAS CIE, and Bindings."
@@ -342,7 +384,8 @@ def configure() {
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
 
 		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 1 {${device.zigbeeId}} {}", "delay 200",
-		"zcl global send-me-a-report 1 0x20 0x20 30 21600 {01}",		//checkin time 6 hrs
+		//"zcl global send-me-a-report 1 0x20 0x20 30 21600 {01}",		//checkin time 6 hrs
+		"zcl global send-me-a-report 1 0x20 0x20 30 ${maxTempReportTime} {01}",		//checkin time 6 hrs
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
 
 		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 0x402 {${device.zigbeeId}} {}", "delay 200",
@@ -353,10 +396,16 @@ def configure() {
         //     The value hardcoded by smartthings here was
         //     6400 = 0x1900 --> 0x0019 = 25
         //     So default is to trigger on 25/100 deg C
-		//"zcl global send-me-a-report 0x402 0 0x29 300 ${maxTempReportTime} {6400}",
-		"zcl global send-me-a-report 0x402 0 0x29 300 3600 {6400}",
+		"zcl global send-me-a-report 0x402 0 0x29 ${minTempReportTime} ${maxTempReportTime} {${zzz}}",
+		//"zcl global send-me-a-report 0x402 0 0x29 300 3600 {6400}",
 		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500"
 	]
+
+    for(cmd in configCmds)
+    {
+        log.debug "    ${cmd}"
+    }
+    
 	return configCmds + refresh() // send refresh cmds as part of config
 }
 
